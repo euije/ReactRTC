@@ -165,6 +165,10 @@ const RTCContainer = ({
   const [roomId, setRoomId] = useState(null);
   const [who, setWho] = useState("");
 
+  const dataChannelRef = useRef();
+  const [inputText, setInputText] = useState("");
+  const [messageList, setMessageList] = useState([]);
+
   const handleCamera = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
@@ -183,51 +187,111 @@ const RTCContainer = ({
   }
 
   useEffect(() => {
-    if(!peerConnectionRef.current){
+    if (!peerConnectionRef.current) {
       peerConnectionRef.current = new RTCPeerConnection(configuration);
       console.log('Create PeerConnectionRef with configuration: ', configuration);
-  
+      
       registerPeerConnectionListeners(peerConnectionRef);
-
+      
       peerConnectionRef.current.addEventListener('track', event => {
         const tempStream = remoteStream.clone();
-  
+        
         console.log('Got remote track:', event.streams[0]);
         event.streams[0].getTracks().forEach(track => {
           console.log('Add a track to the remoteStream:', track);
           tempStream.addTrack(track);
         });
-  
+        
         setRemoteStream(tempStream)
+      });
+
+      dataChannelRef.current = peerConnectionRef.current.createDataChannel("chat");
+      dataChannelRef.current.addEventListener("open", (event) => {
+        console.log("data channel is opened");
+      });
+      dataChannelRef.current.addEventListener("message", (event) => {
+        setMessageList([...messageList, event.data]);
+        console.log(event);
       });
     }
   }, []);
 
   useEffect(() => {
-    if(remoteStream && remoteStream instanceof MediaStream) {
+    if (remoteStream) {
       remoteStreamRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
 
   return (
     <>
-      <button onClick={handleCamera}>{"카메라, 마이크 켜기"}</button>
-      <video ref={localStreamRef} muted autoPlay playsInline></video>
-      <video ref={remoteStreamRef} muted autoPlay playsInline></video>
+      <div style={{ display: "flex" }}>
+        <div style={{ display: "flex", flexDirection: "column", width: "500px", height: "800px", justifyContent: "space-evenly" }}>
+          <div style={{ border: "10px solid blue" }}>
+            <video ref={localStreamRef} muted autoPlay playsInline></video>
+          </div>
+          <div style={{ border: "10px solid green" }}>
+            <video ref={remoteStreamRef} muted autoPlay playsInline></video>
+          </div>
+          <button
+            disabled={localStream}
+            onClick={handleCamera}>{"카메라, 마이크 켜기"}</button>
 
-      <div style={{ display: "flex", flexDirection: "column", height: "150px", justifyContent: "space-evenly" }}>
-        <input onChange={(e) => setRoomId(e.target.value)} />
-        <button onClick={() => {
-          createRoom(db, peerConnectionRef, roomId);
-          setWho("caller");
-        }}>{"방 만들기"}</button>
-        <button onClick={() => {
-          joinRoom(db, peerConnectionRef, roomId);
-          setWho("callee");
-        }}>{"방 참여하기"}</button>
+          <div>
+            <input
+              placeholder='방 이름을 입력하세요'
+              onChange={(e) => setRoomId(e.target.value)} />
+            <button
+              disabled={who === "" ? false : who !== "caller"}
+              onClick={() => {
+                createRoom(db, peerConnectionRef, roomId);
+                setWho("caller");
+              }}>{"방 만들기"}</button>
+            <button
+              disabled={who === "" ? false : who !== "callee"}
+              onClick={() => {
+                joinRoom(db, peerConnectionRef, roomId);
+                setWho("callee");
+              }}>{"방 참여하기"}</button>
+          </div>
 
-        <div>{`Current room is ${roomId} - You are the ${who}!`}</div>
-        <button onClick={() => console.log(peerConnectionRef.current)}>{"RTCConnection 객체 보기"}</button>
+          <div>{`Current room is ${roomId} - You are the ${who}!`}</div>
+          <button onClick={() => console.log(peerConnectionRef.current)}>{"RTCConnection 객체 보기"}</button>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", width: "500px", height: "800px", justifyContent: "space-evenly", alignItems: "center" }}>
+          <div style={{width: "300px", height: "700px", overflowY: "scroll"}}>
+            {
+              messageList.map((message, index) => {
+                return (
+                  <div id={message + index}>
+                    <div>
+                      {message.message}
+                    </div>
+                    <div>
+                      {message.timestamp}
+                    </div>
+                  </div>
+                );
+              })
+            }
+          </div>
+          <div>
+            <input
+              value={inputText}
+              onChange={(e) => {setInputText(e.target.value)}}
+              placeholder='채팅'
+            />
+            <button 
+              disabled={who === ""}
+              onClick={() => {
+                console.log(dataChannelRef.current);
+                dataChannelRef.current.send(JSON.stringify({
+                  message: inputText,
+                  timestamp: new Date()
+                }));
+              }}  
+              >{"전송"}</button>
+          </div>
+        </div>
       </div>
     </>
   )
