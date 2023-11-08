@@ -190,29 +190,32 @@ const RTCContainer = ({
     if (!peerConnectionRef.current) {
       peerConnectionRef.current = new RTCPeerConnection(configuration);
       console.log('Create PeerConnectionRef with configuration: ', configuration);
-      
+
       registerPeerConnectionListeners(peerConnectionRef);
-      
+
       peerConnectionRef.current.addEventListener('track', event => {
         const tempStream = remoteStream.clone();
-        
+
         console.log('Got remote track:', event.streams[0]);
         event.streams[0].getTracks().forEach(track => {
           console.log('Add a track to the remoteStream:', track);
           tempStream.addTrack(track);
         });
-        
+
         setRemoteStream(tempStream)
       });
 
-      dataChannelRef.current = peerConnectionRef.current.createDataChannel("chat");
-      dataChannelRef.current.addEventListener("open", (event) => {
-        console.log("data channel is opened");
+      peerConnectionRef.current.addEventListener('datachannel', (event) => {
+        const remoteDataChannel = event.channel;
+        remoteDataChannel.addEventListener('message', (event) => {
+          const { sender, message, timestamp } = JSON.parse(event.data);
+
+          setMessageList((prev) => [...prev, {sender, message, timestamp}]);
+          console.log(sender);
+        });
       });
-      dataChannelRef.current.addEventListener("message", (event) => {
-        setMessageList([...messageList, event.data]);
-        console.log(event);
-      });
+
+      dataChannelRef.current = peerConnectionRef.current.createDataChannel("chat", { ordered: true });
     }
   }, []);
 
@@ -258,11 +261,18 @@ const RTCContainer = ({
           <button onClick={() => console.log(peerConnectionRef.current)}>{"RTCConnection 객체 보기"}</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", width: "500px", height: "800px", justifyContent: "space-evenly", alignItems: "center" }}>
-          <div style={{width: "300px", height: "700px", overflowY: "scroll"}}>
+          <div style={{ width: "300px", height: "700px", overflowY: "scroll", display: "flex", flexDirection: "column", alignItems: "center" }}>
             {
               messageList.map((message, index) => {
                 return (
-                  <div id={message + index}>
+                  <div key={index} style={{
+                    width: "200px",
+                    height: "50px",
+                    borderRadius: "10px",
+                    backgroundColor: who === message.sender ? "green" : "blue",
+                    margin: `5px ${who !== message.sender ? "auto" : 0} 5px ${who === message.sender ? "auto" : 0}`,
+                    color: "white"
+                  }}>
                     <div>
                       {message.message}
                     </div>
@@ -277,19 +287,21 @@ const RTCContainer = ({
           <div>
             <input
               value={inputText}
-              onChange={(e) => {setInputText(e.target.value)}}
+              onChange={(e) => { setInputText(e.target.value) }}
               placeholder='채팅'
             />
-            <button 
+            <button
               disabled={who === ""}
               onClick={() => {
-                console.log(dataChannelRef.current);
-                dataChannelRef.current.send(JSON.stringify({
+                const message = {
+                  sender: who,
                   message: inputText,
-                  timestamp: new Date()
-                }));
-              }}  
-              >{"전송"}</button>
+                  timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC'})
+                };
+                dataChannelRef.current.send(JSON.stringify(message));
+                setMessageList(prev => [...prev, message]);
+              }}
+            >{"전송"}</button>
           </div>
         </div>
       </div>
