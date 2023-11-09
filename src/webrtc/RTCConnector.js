@@ -170,6 +170,7 @@ const RTCContainer = ({
   const [messageList, setMessageList] = useState([]);
 
   const [uploadFile, setUploadFile] = useState(null);
+  const [uploadBuffer, setUploadBuffer] = useState([]);
   const [expectedSize, setExpectedSize] = useState(0);
   const [expectedName, setExpectedName] = useState("");
   const [receivedBuffer, setReceivedBuffer] = useState([]);
@@ -250,6 +251,17 @@ const RTCContainer = ({
       dataChannelRef.current.send(JSON.stringify({ type: "file", name: uploadFile.name, size: uploadFile.size }));
     }
   }, [uploadFile]);
+
+  // useEffect(() => {
+  //   if(uploadFile && uploadFile.size === uploadBuffer.length) {
+  //     setMessageList(prev => [...prev, {
+  //       sender: who,
+  //       href: URL.createObjectURL(new Blob(uploadBuffer)),
+  //       name: uploadFile.name,
+  //       timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
+  //     }]);
+  //   }
+  // }, [uploadBuffer]);
 
   useEffect(() => {
     if (receivedSize === expectedSize && receivedSize && expectedSize) {
@@ -378,7 +390,6 @@ const RTCContainer = ({
               <button onClick={() => {
                 let offset = 0;
                 const chunkSize = 16384;
-                const sentBuffer = [];
 
                 const readSlice = (fileReader, file, o, offset, chunkSize) => {
                   const slice = file.slice(offset, o + chunkSize);
@@ -388,7 +399,7 @@ const RTCContainer = ({
                 const fileReader = new FileReader();
                 fileReader.addEventListener('load', (event) => {
                   dataChannelRef.current.send(event.target.result);
-                  sentBuffer.push(event.target.result);
+                  setUploadBuffer((prev) => [...prev, event.target.result]);
 
                   offset += event.target.result.byteLength;
 
@@ -398,9 +409,10 @@ const RTCContainer = ({
                 })
 
                 readSlice(fileReader, uploadFile, 0, offset, chunkSize);
+
                 setMessageList(prev => [...prev, {
                   sender: who,
-                  href: URL.createObjectURL(new Blob(sentBuffer)),
+                  href: URL.createObjectURL(uploadFile),
                   name: uploadFile.name,
                   timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
                 }]);
