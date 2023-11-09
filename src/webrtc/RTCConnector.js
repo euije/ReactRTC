@@ -169,6 +169,12 @@ const RTCContainer = ({
   const [inputText, setInputText] = useState("");
   const [messageList, setMessageList] = useState([]);
 
+  const [uploadFile, setUploadFile] = useState(null);
+  const [expectedSize, setExpectedSize] = useState(0);
+  const [expectedName, setExpectedName] = useState("");
+  const [receivedBuffer, setReceivedBuffer] = useState([]);
+  const [receivedSize, setReceivedSize] = useState(0);
+
   const handleCamera = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: true,
@@ -208,10 +214,24 @@ const RTCContainer = ({
       peerConnectionRef.current.addEventListener('datachannel', (event) => {
         const remoteDataChannel = event.channel;
         remoteDataChannel.addEventListener('message', (event) => {
-          const { sender, message, timestamp } = JSON.parse(event.data);
+          try {
+            const dataMessage = JSON.parse(event.data);
+            const { type } = dataMessage;
 
-          setMessageList((prev) => [...prev, {sender, message, timestamp}]);
-          console.log(sender);
+            if (type === "file") {
+              const { name, size } = dataMessage;
+              setExpectedName((prev) => name);
+              setExpectedSize((prev) => size);
+            } else if (type === "text") {
+              const { sender, message, timestamp } = dataMessage;
+              setMessageList((prev) => [...prev, { sender, message, timestamp }]);
+            }
+          } catch (e) {
+            remoteDataChannel.binaryType = 'arraybuffer';
+
+            setReceivedBuffer(prev => [...prev, event.data]);
+            setReceivedSize(prev => prev += event.data.byteLength);
+          }
         });
       });
 
@@ -224,6 +244,33 @@ const RTCContainer = ({
       remoteStreamRef.current.srcObject = remoteStream;
     }
   }, [remoteStream]);
+
+  useEffect(() => {
+    if (uploadFile instanceof File) {
+      dataChannelRef.current.send(JSON.stringify({ type: "file", name: uploadFile.name, size: uploadFile.size }));
+    }
+  }, [uploadFile]);
+
+  useEffect(() => {
+    if (receivedSize === expectedSize && receivedSize && expectedSize) {
+      const received = new Blob(receivedBuffer);
+      setReceivedBuffer([]);
+      setReceivedSize(0);
+
+      setMessageList((prev) => [...prev, {
+        href: URL.createObjectURL(received),
+        name: expectedName,
+        timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
+      }]);
+      console.log({
+        href: URL.createObjectURL(received),
+        name: expectedName,
+        timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
+      });
+
+      console.log("file is loaded!");
+    }
+  }, [expectedSize, expectedName, receivedBuffer, receivedSize]);
 
   return (
     <>
@@ -258,29 +305,50 @@ const RTCContainer = ({
           </div>
 
           <div>{`Current room is ${roomId} - You are the ${who}!`}</div>
-          <button onClick={() => console.log(peerConnectionRef.current)}>{"RTCConnection 객체 보기"}</button>
+          <button onClick={() => console.log(peerConnectionRef.current)}>{"RTCPeerConnection 객체 보기"}</button>
+          <button onClick={() => console.log(dataChannelRef.current)}>{"RTCDataChannel 객체 보기"}</button>
         </div>
         <div style={{ display: "flex", flexDirection: "column", width: "500px", height: "800px", justifyContent: "space-evenly", alignItems: "center" }}>
           <div style={{ width: "300px", height: "700px", overflowY: "scroll", display: "flex", flexDirection: "column", alignItems: "center" }}>
             {
               messageList.map((message, index) => {
-                return (
-                  <div key={index} style={{
-                    width: "200px",
-                    height: "50px",
-                    borderRadius: "10px",
-                    backgroundColor: who === message.sender ? "green" : "blue",
-                    margin: `5px ${who !== message.sender ? "auto" : 0} 5px ${who === message.sender ? "auto" : 0}`,
-                    color: "white"
-                  }}>
-                    <div>
-                      {message.message}
+                if (message.href) {
+                  return (
+                    <div key={index} style={{
+                      width: "200px",
+                      height: "50px",
+                      borderRadius: "10px",
+                      backgroundColor: who === message.sender ? "green" : "blue",
+                      margin: `5px ${who !== message.sender ? "auto" : 0} 5px ${who === message.sender ? "auto" : 0}`,
+                      color: "white"
+                    }}>
+                      <a style={{color: "orange"}} href={message.href} download={message.name}>
+                        {`${message.name}`}
+                      </a>
+                      <div>
+                        {message.timestamp}
+                      </div>
                     </div>
-                    <div>
-                      {message.timestamp}
+                  );
+                } else {
+                  return (
+                    <div key={index} style={{
+                      width: "200px",
+                      height: "50px",
+                      borderRadius: "10px",
+                      backgroundColor: who === message.sender ? "green" : "blue",
+                      margin: `5px ${who !== message.sender ? "auto" : 0} 5px ${who === message.sender ? "auto" : 0}`,
+                      color: "white"
+                    }}>
+                      <div>
+                        {message.message}
+                      </div>
+                      <div>
+                        {message.timestamp}
+                      </div>
                     </div>
-                  </div>
-                );
+                  );
+                }
               })
             }
           </div>
@@ -294,14 +362,50 @@ const RTCContainer = ({
               disabled={who === ""}
               onClick={() => {
                 const message = {
+                  type: "text",
                   sender: who,
                   message: inputText,
-                  timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC'})
+                  timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
                 };
                 dataChannelRef.current.send(JSON.stringify(message));
                 setMessageList(prev => [...prev, message]);
               }}
             >{"전송"}</button>
+            <div>
+              <input type="file" name="files" onChange={(event) => {
+                setUploadFile(event.target.files[0]);
+              }} />
+              <button onClick={() => {
+                let offset = 0;
+                const chunkSize = 16384;
+                const sentBuffer = [];
+
+                const readSlice = (fileReader, file, o, offset, chunkSize) => {
+                  const slice = file.slice(offset, o + chunkSize);
+                  fileReader.readAsArrayBuffer(slice);
+                };
+
+                const fileReader = new FileReader();
+                fileReader.addEventListener('load', (event) => {
+                  dataChannelRef.current.send(event.target.result);
+                  sentBuffer.push(event.target.result);
+
+                  offset += event.target.result.byteLength;
+
+                  if (offset < uploadFile.size) {
+                    readSlice(fileReader, uploadFile, offset, offset, chunkSize);
+                  }
+                })
+
+                readSlice(fileReader, uploadFile, 0, offset, chunkSize);
+                setMessageList(prev => [...prev, {
+                  sender: who,
+                  href: URL.createObjectURL(new Blob(sentBuffer)),
+                  name: uploadFile.name,
+                  timestamp: new Date().toLocaleString('ko-kr', { timeZone: 'UTC' })
+                }]);
+              }}>{"파일 전송하기"}</button>
+            </div>
           </div>
         </div>
       </div>
